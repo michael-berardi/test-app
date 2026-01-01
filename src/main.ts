@@ -8,12 +8,12 @@ type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 // --- Configuration ---
 const CONFIG = {
   tree: {
-    maxDepth: 6, 
-    branchRadius: 0.6,
-    branchLength: 5.5,
-    branchShrink: 0.72,
-    branchSplitAngle: 0.5,
-    leafDensity: 5,
+    maxDepth: 5, 
+    branchRadius: 0.7,
+    branchLength: 6.0,
+    branchShrink: 0.7,
+    branchSplitAngle: 0.6,
+    leafDensity: 6,
   },
   seasons: {
     spring: {
@@ -33,7 +33,7 @@ const CONFIG = {
     },
     winter: {
       skyTop: 0x1a1a2e, skyBottom: 0x5a6a7a, fog: 0x8a9a9a,
-      ground: 0xffffff, leaf: 0xffffff, leafOpacity: 0.0, // No leaves effectively
+      ground: 0xffffff, leaf: 0xffffff, leafOpacity: 0.0,
       sunIntensity: 0.8, sunColor: 0xcceeff, snow: 1.0
     }
   }
@@ -48,11 +48,11 @@ scene.fog = new THREE.FogExp2(initialSeason.fog, 0.012);
 scene.background = new THREE.Color(initialSeason.fog);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 8, 25);
+camera.position.set(0, 8, 30);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Optimize for retina
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -64,14 +64,17 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.minDistance = 5;
-controls.maxDistance = 50;
-controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent going under ground
+controls.maxDistance = 60;
+controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.5;
 
 // --- Lighting ---
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
 scene.add(ambientLight);
+
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+scene.add(hemiLight);
 
 const sunLight = new THREE.DirectionalLight(initialSeason.sunColor, initialSeason.sunIntensity);
 sunLight.position.set(50, 60, 40);
@@ -83,9 +86,10 @@ scene.add(sunLight);
 
 // --- Materials ---
 const barkMaterial = new THREE.MeshStandardMaterial({ 
-    color: 0x3d2e23, 
-    roughness: 0.9,
-    bumpScale: 0.2
+    color: 0x4a3c31, 
+    roughness: 0.8,
+    bumpScale: 0.5,
+    flatShading: false
 });
 
 const leafMaterial = new THREE.MeshStandardMaterial({
@@ -98,163 +102,219 @@ const leafMaterial = new THREE.MeshStandardMaterial({
 
 const groundMat = new THREE.MeshStandardMaterial({ 
     color: initialSeason.ground,
-    roughness: 0.8,
+    roughness: 0.9,
     metalness: 0.1,
     flatShading: true
-});
-
-const mountainMat = new THREE.MeshStandardMaterial({ 
-    color: 0x222222, 
-    roughness: 0.9, 
-    flatShading: true 
-});
-const snowMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.3,
-    metalness: 0.1,
-    emissive: 0x222233,
-    emissiveIntensity: 0.2
 });
 
 // --- Environment Generation (Patagonia) ---
 
 // 1. Water Plane (Lake)
-const waterGeo = new THREE.PlaneGeometry(500, 500);
+const waterGeo = new THREE.PlaneGeometry(800, 800);
 const waterMat = new THREE.MeshStandardMaterial({
     color: 0x004466,
-    roughness: 0.1,
-    metalness: 0.8,
+    roughness: 0.05, // More reflective
+    metalness: 0.9,
 });
 const water = new THREE.Mesh(waterGeo, waterMat);
 water.rotation.x = -Math.PI / 2;
-water.position.y = -0.5;
+water.position.y = -2;
 scene.add(water);
 
 // 2. Terrain (Ground Island)
-const groundGeo = new THREE.CircleGeometry(40, 64);
+const groundGeo = new THREE.CircleGeometry(50, 128);
 const posAttr = groundGeo.attributes.position;
 for(let i=0; i<posAttr.count; i++){
     const x = posAttr.getX(i);
     const y = posAttr.getY(i);
     const dist = Math.sqrt(x*x + y*y);
+    
+    // Perlin-ish noise approximation
+    let z = Math.sin(x * 0.15) * Math.cos(y * 0.15) * 1.5;
+    z += Math.sin(x * 0.5 + y * 0.3) * 0.5;
+    z += (Math.random() - 0.5) * 0.2;
+    
     // Taper edges into water
-    let z = (Math.sin(x * 0.2) * Math.cos(y * 0.2)) * 1.5;
-    z += Math.random() * 0.5;
-    if(dist > 30) z -= (dist - 30) * 0.5;
-    posAttr.setZ(i, Math.max(-2, z));
+    if(dist > 35) {
+        z -= (dist - 35) * 0.8;
+    }
+    
+    posAttr.setZ(i, Math.max(-3, z)); // Clamp bottom
 }
 groundGeo.computeVertexNormals();
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.5;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// 3. Mountains (Fitz Roy Style jagged peaks)
-const mountainsGroup = new THREE.Group();
-scene.add(mountainsGroup);
+// 3. Mountains (Realistic Plane Displacement)
+const mtnWidth = 400;
+const mtnDepth = 200;
+const mtnGeo = new THREE.PlaneGeometry(mtnWidth, mtnDepth, 128, 64);
+const mtnPos = mtnGeo.attributes.position;
 
-function createMountain(x: number, z: number, height: number, width: number) {
-    const geo = new THREE.ConeGeometry(width, height, 4, 12, true);
-    // Jitter vertices for jagged look
-    const pos = geo.attributes.position;
-    for(let i=0; i<pos.count; i++){
-        if(pos.getY(i) < height * 0.9) { // Keep tip relatively sharp
-            pos.setX(i, pos.getX(i) + (Math.random()-0.5)*width*0.4);
-            pos.setZ(i, pos.getZ(i) + (Math.random()-0.5)*width*0.4);
-            pos.setY(i, pos.getY(i) + (Math.random()-0.5)*height*0.1);
-        }
-    }
-    geo.computeVertexNormals();
+for(let i=0; i<mtnPos.count; i++){
+    const x = mtnPos.getX(i);
+    const y = mtnPos.getY(i); // This is actually Z in world space before rotation
     
-    const mesh = new THREE.Mesh(geo, mountainMat);
-    mesh.position.set(x, height/2 - 5, z);
+    // Jagged Noise Function
+    let h = 0;
+    // Layer 1: Big shapes
+    h += Math.sin(x * 0.02) * Math.cos(y * 0.03) * 30;
+    // Layer 2: Medium details
+    h += Math.sin(x * 0.05 + 2) * Math.cos(y * 0.06 + 1) * 15;
+    // Layer 3: Sharp peaks (Simulate erosion with abs)
+    h += Math.abs(Math.sin(x * 0.1 + y * 0.05) * 10);
+    // Layer 4: Noise
+    h += (Math.random() - 0.5) * 3;
     
-    // Snow cap
-    const snowGeo = geo.clone();
-    snowGeo.scale(1.02, 0.3, 1.02);
-    snowGeo.translate(0, height * 0.35, 0);
-    const snowCap = new THREE.Mesh(snowGeo, snowMat);
-    mesh.add(snowCap);
+    // Lift up to form backdrop
+    h += 20;
 
-    mountainsGroup.add(mesh);
+    // Mask to keep center clear? No, this is background.
+    // Just make sure it's high enough.
+    
+    // Snow threshold logic later in shader? 
+    // We can't easily multi-material a single plane without shaders or vertex colors.
+    // For now, let's just make it all rock/snow mix via vertex colors?
+    // Or just simple material.
+    
+    mtnPos.setZ(i, Math.max(0, h)); // Height is Z here
 }
+mtnGeo.computeVertexNormals();
 
-// Background peaks
-createMountain(-30, -60, 80, 25);
-createMountain(10, -80, 100, 30); // Main peak
-createMountain(40, -60, 70, 20);
-createMountain(-60, -40, 50, 25);
-createMountain(50, 10, 40, 15);
+// Create a canvas texture for snow/rock mix to add realism without custom shader code
+const canvas = document.createElement('canvas');
+canvas.width = 512;
+canvas.height = 512;
+const ctx = canvas.getContext('2d');
+if (ctx) {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, 512, 512);
+    // Add snow gradient
+    const grad = ctx.createLinearGradient(0, 512, 0, 0);
+    grad.addColorStop(0.4, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.8, 'rgba(255,255,255,0.8)');
+    grad.addColorStop(1.0, 'rgba(255,255,255,1)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 512, 512);
+}
+const mtnTexture = new THREE.CanvasTexture(canvas);
+const realisticMtnMat = new THREE.MeshStandardMaterial({
+    map: mtnTexture,
+    displacementMap: mtnTexture, // Use brightness for extra detail
+    displacementScale: 10,
+    roughness: 0.8,
+    color: 0xffffff
+});
+
+const mountains = new THREE.Mesh(mtnGeo, realisticMtnMat);
+mountains.rotation.x = -Math.PI / 2;
+mountains.position.set(0, -5, -80); // Push back
+scene.add(mountains);
 
 
-// --- Tree Generation ---
+// --- Organic Tree Generation ---
 const treeGroup = new THREE.Group();
 scene.add(treeGroup);
 const leaves: THREE.Mesh[] = [];
 
 function buildTree() {
-    // Clear existing
+    // Clear
     while(treeGroup.children.length > 0){ 
         treeGroup.remove(treeGroup.children[0]); 
     }
     leaves.length = 0;
 
-    const generateBranch = (start: THREE.Vector3, dir: THREE.Vector3, len: number, rad: number, d: number) => {
-        if(d === 0) {
-            // Leaves
-            const leafCount = currentSeason === 'winter' ? 0 : CONFIG.tree.leafDensity;
-            if (leafCount > 0) {
-                const leafGeo = new THREE.PlaneGeometry(0.4, 0.4);
-                for(let i=0; i<leafCount; i++){
-                    const leaf = new THREE.Mesh(leafGeo, leafMaterial);
-                    leaf.position.copy(start);
-                    leaf.position.x += (Math.random()-0.5);
-                    leaf.position.y += (Math.random()-0.5);
-                    leaf.position.z += (Math.random()-0.5);
-                    leaf.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
-                    leaf.castShadow = true;
-                    // Custom data for animation
-                    leaf.userData = { 
-                        freq: Math.random() + 0.5, 
-                        phase: Math.random() * Math.PI * 2,
-                        basePos: leaf.position.clone()
-                    };
-                    treeGroup.add(leaf);
-                    leaves.push(leaf);
-                }
-            }
-            return;
+    const createOrganicBranch = (startPos: THREE.Vector3, direction: THREE.Vector3, length: number, radius: number, depth: number) => {
+        if (depth === 0) {
+             // Leaves
+             const leafCount = currentSeason === 'winter' ? 0 : CONFIG.tree.leafDensity;
+             if (leafCount > 0) {
+                 const leafGeo = new THREE.PlaneGeometry(0.4, 0.4);
+                 for(let i=0; i<leafCount; i++){
+                     const leaf = new THREE.Mesh(leafGeo, leafMaterial);
+                     leaf.position.copy(startPos);
+                     leaf.position.x += (Math.random()-0.5) * 1.5;
+                     leaf.position.y += (Math.random()-0.5) * 1.5;
+                     leaf.position.z += (Math.random()-0.5) * 1.5;
+                     leaf.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+                     leaf.castShadow = true;
+                     leaf.userData = { 
+                         freq: Math.random() + 0.5, 
+                         phase: Math.random() * Math.PI * 2,
+                         basePos: leaf.position.clone()
+                     };
+                     treeGroup.add(leaf);
+                     leaves.push(leaf);
+                 }
+             }
+             return;
         }
 
-        const end = new THREE.Vector3().copy(start).add(dir.clone().multiplyScalar(len));
+        const endPos = new THREE.Vector3().copy(startPos).add(direction.clone().multiplyScalar(length));
         
-        // Branch Mesh
-        const branchGeo = new THREE.CylinderGeometry(rad*CONFIG.tree.branchShrink, rad, len, 6);
-        branchGeo.translate(0, len/2, 0);
-        const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
-        const branch = new THREE.Mesh(branchGeo, barkMaterial);
-        branch.position.copy(start);
-        branch.setRotationFromQuaternion(quat);
+        // Create Curve
+        const points = [];
+        points.push(startPos.clone());
+        
+        // Mid point with "wiggle"
+        const midPos = new THREE.Vector3().lerpVectors(startPos, endPos, 0.5);
+        midPos.x += (Math.random() - 0.5) * length * 0.2;
+        midPos.z += (Math.random() - 0.5) * length * 0.2;
+        points.push(midPos);
+        
+        points.push(endPos.clone());
+        
+        const curve = new THREE.CatmullRomCurve3(points);
+        
+        // Tube Geometry
+        const segments = 8;
+        const tubeGeo = new THREE.TubeGeometry(curve, segments, radius, 6, false);
+        
+        // Taper the tube manually
+        const pos = tubeGeo.attributes.position;
+        
+        // Simpler taper check
+        for(let i=0; i < pos.count; i++) {
+             // We can't easily tell which ring we are in without more logic.
+             // But we can taper based on distance from start?
+             // No, let's just use the radius decrease for children.
+             // For "Continuous" look, we just ensure child starts where parent ends.
+        }
+        
+        const branch = new THREE.Mesh(tubeGeo, barkMaterial);
         branch.castShadow = true;
         branch.receiveShadow = true;
         treeGroup.add(branch);
 
-        // Children
+        // Recursive Children
         const count = 2 + (Math.random() > 0.7 ? 1 : 0);
         for(let i=0; i<count; i++){
-            const angleX = (Math.random()-0.5) * CONFIG.tree.branchSplitAngle * 2.5;
-            const angleZ = (Math.random()-0.5) * CONFIG.tree.branchSplitAngle * 2.5;
-            const newDir = dir.clone().applyEuler(new THREE.Euler(angleX, 0, angleZ)).normalize();
+            const angleX = (Math.random()-0.5) * CONFIG.tree.branchSplitAngle * 2.0;
+            const angleZ = (Math.random()-0.5) * CONFIG.tree.branchSplitAngle * 2.0;
             
-            // "Windswept" bias (Patagonia wind usually Strong West->East)
-            newDir.x += 0.15; 
+            // Calculate tangent at end of curve for smooth transition
+            const tangent = curve.getTangentAt(1);
+            
+            const newDir = tangent.clone().applyEuler(new THREE.Euler(angleX, 0, angleZ)).normalize();
+            
+            // Wind bias
+            newDir.x += 0.1;
             newDir.normalize();
 
-            generateBranch(end, newDir, len*CONFIG.tree.branchShrink, rad*CONFIG.tree.branchShrink, d-1);
+            createOrganicBranch(
+                endPos, 
+                newDir, 
+                length * CONFIG.tree.branchShrink, 
+                radius * CONFIG.tree.branchShrink, 
+                depth - 1
+            );
         }
     };
 
-    generateBranch(new THREE.Vector3(0,0,0), new THREE.Vector3(0,1,0), CONFIG.tree.branchLength, CONFIG.tree.branchRadius, CONFIG.tree.maxDepth);
+    createOrganicBranch(new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 1, 0), CONFIG.tree.branchLength, CONFIG.tree.branchRadius, CONFIG.tree.maxDepth);
 }
 
 buildTree();
@@ -267,19 +327,17 @@ function setSeason(s: Season) {
     currentSeason = s;
     targetSeasonData = CONFIG.seasons[s];
     
-    // Update UI state
     document.querySelectorAll('.season-btn').forEach(btn => {
         btn.classList.toggle('active', (btn as HTMLElement).dataset.season === s);
     });
 
     if (s === 'winter') {
-         // Optionally trigger effects
+         // effects
     } else {
         if (treeGroup.children.length < 50) buildTree(); 
     }
 }
 
-// UI Handling
 const btns = document.querySelectorAll('.season-btn');
 btns.forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -289,12 +347,10 @@ btns.forEach(btn => {
 });
 
 function animateSeason() {
-    // Lerp Light
     sunLight.intensity += (targetSeasonData.sunIntensity - sunLight.intensity) * 0.05;
     const tSun = new THREE.Color(targetSeasonData.sunColor);
     sunLight.color.lerp(tSun, 0.05);
 
-    // Lerp Fog/BG
     const tFog = new THREE.Color(targetSeasonData.fog);
     // @ts-ignore
     if (scene.fog) {
@@ -309,15 +365,12 @@ function animateSeason() {
         scene.background.lerp(tFog, 0.05);
     }
 
-    // Lerp Ground
     const tGround = new THREE.Color(targetSeasonData.ground);
     groundMat.color.lerp(tGround, 0.05);
 
-    // Lerp Leaves
     const tLeaf = new THREE.Color(targetSeasonData.leaf);
     leafMaterial.color.lerp(tLeaf, 0.05);
     
-    // Lerp Opacity
     leafMaterial.opacity += (targetSeasonData.leafOpacity - leafMaterial.opacity) * 0.05;
 }
 
@@ -327,9 +380,8 @@ function animate() {
     requestAnimationFrame(animate);
     
     time += 0.01;
-    controls.update(); // for damping and autoRotate
+    controls.update(); 
     
-    // Animate Tree (Wind)
     const windStrength = 0.05 + Math.sin(time * 0.5) * 0.02;
     leaves.forEach(leaf => {
         const { freq, phase, basePos } = leaf.userData;
