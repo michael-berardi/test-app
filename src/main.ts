@@ -261,97 +261,32 @@ buildTree();
 
 
 // --- Season Logic ---
+let targetSeasonData = CONFIG.seasons[currentSeason];
+
 function setSeason(s: Season) {
     currentSeason = s;
-    const data = CONFIG.seasons[s];
+    targetSeasonData = CONFIG.seasons[s];
+    
+    // Update UI state
+    document.querySelectorAll('.season-btn').forEach(btn => {
+        btn.classList.toggle('active', (btn as HTMLElement).dataset.season === s);
+    });
 
-    // Animate Colors
-    const dur = 1000; // ms
-    
-    // Background / Fog
-    new TWEEN.Tween(scene.background).to({ r: new THREE.Color(data.fog).r, g: new THREE.Color(data.fog).g, b: new THREE.Color(data.fog).b }, dur).start();
-    new TWEEN.Tween(scene.fog).to({ color: new THREE.Color(data.fog), density: s === 'winter' ? 0.02 : 0.012 }, dur).start();
-    
-    // Ground
-    new TWEEN.Tween(groundMat.color).to({ r: new THREE.Color(data.ground).r, g: new THREE.Color(data.ground).g, b: new THREE.Color(data.ground).b }, dur).start();
-    
-    // Leaves
     if (s === 'winter') {
-        // Drop leaves or hide them
-        leafMaterial.opacity = 0;
-        // Rebuild tree to remove leaves physically? No, just hide for smooth transition then rebuild if needed.
-        // Or simpler: rebuild tree instantly for winter vs others?
-        // Let's just fade opacity.
-        new TWEEN.Tween(leafMaterial).to({ opacity: 0 }, dur).onComplete(() => buildTree()).start();
+         // Optionally trigger effects
     } else {
-        // If coming from winter, we might need to rebuild to add leaves back if they were removed
-        if (leafMaterial.opacity < 0.1) buildTree(); 
-        
-        const c = new THREE.Color(data.leaf);
-        new TWEEN.Tween(leafMaterial.color).to({ r: c.r, g: c.g, b: c.b }, dur).start();
-        new TWEEN.Tween(leafMaterial).to({ opacity: data.leafOpacity }, dur).start();
+        if (treeGroup.children.length < 50) buildTree(); 
     }
-
-    // Light
-    const sc = new THREE.Color(data.sunColor);
-    new TWEEN.Tween(sunLight.color).to({ r: sc.r, g: sc.g, b: sc.b }, dur).start();
-    new TWEEN.Tween(sunLight).to({ intensity: data.sunIntensity }, dur).start();
 }
 
 // UI Handling
 const btns = document.querySelectorAll('.season-btn');
 btns.forEach(btn => {
     btn.addEventListener('click', (e) => {
-        btns.forEach(b => b.classList.remove('active'));
-        (e.target as HTMLElement).classList.add('active');
         const s = (e.target as HTMLElement).dataset.season as Season;
         setSeason(s);
     });
 });
-
-
-// --- Animation Loop ---
-// Minimal Tween Polyfill for simplicity
-const TWEEN_GROUPS: any[] = [];
-class Tween {
-    obj: any;
-    target: any;
-    duration: number;
-    startTime: number;
-    easing: (t: number) => number = t => t * (2 - t); // EaseOutQuad
-    onCompleteCb: (() => void) | null = null;
-    
-    constructor(obj: any) { this.obj = obj; this.target = {}; this.duration = 1000; this.startTime = performance.now(); TWEEN_GROUPS.push(this); }
-    to(target: any, duration: number) { this.target = target; this.duration = duration; return this; }
-    onComplete(cb: () => void) { this.onCompleteCb = cb; return this; }
-    start() { this.startTime = performance.now(); return this; }
-    update(time: number) {
-        const elapsed = time - this.startTime;
-        let progress = Math.min(elapsed / this.duration, 1);
-        progress = this.easing(progress);
-        
-        for (const key in this.target) {
-            if (typeof this.obj[key] === 'object' && this.obj[key].isColor) {
-                 // Handle Color objects specially if needed, but here we passed r,g,b directly or handled it outside. 
-                 // Actually my usage above: scene.background is Color. TWEEN target is {r,g,b}.
-                 // Wait, scene.background IS a Color object. So I can't just set properties if I didn't set them on the object.
-            }
-            // Simple Lerp
-            // NOTE: This is a very rough custom tween for zero-dependency.
-            // A better way for colors:
-            // We need start values.
-        }
-        // ... Implementing a full tween engine is tedious. 
-        // Let's use a simpler approach: 
-        // Just interpolate in the main loop based on a "target state".
-    }
-}
-// REWRITE: Using a simple Leroy approach in animate loop for smooth transitions
-// instead of a complex Tween class.
-
-let targetSeasonData = CONFIG.seasons[currentSeason];
-let transitionAlpha = 0; 
-let transitionSpeed = 0.02;
 
 function animateSeason() {
     // Lerp Light
@@ -361,9 +296,18 @@ function animateSeason() {
 
     // Lerp Fog/BG
     const tFog = new THREE.Color(targetSeasonData.fog);
-    scene.fog?.color.lerp(tFog, 0.05);
     // @ts-ignore
-    scene.background?.lerp(tFog, 0.05);
+    if (scene.fog) {
+         // @ts-ignore
+         scene.fog.color.lerp(tFog, 0.05);
+         // @ts-ignore
+         scene.fog.density += ((currentSeason === 'winter' ? 0.02 : 0.012) - scene.fog.density) * 0.05;
+    }
+    // @ts-ignore
+    if (scene.background && scene.background.isColor) {
+        // @ts-ignore
+        scene.background.lerp(tFog, 0.05);
+    }
 
     // Lerp Ground
     const tGround = new THREE.Color(targetSeasonData.ground);
@@ -372,20 +316,9 @@ function animateSeason() {
     // Lerp Leaves
     const tLeaf = new THREE.Color(targetSeasonData.leaf);
     leafMaterial.color.lerp(tLeaf, 0.05);
+    
+    // Lerp Opacity
     leafMaterial.opacity += (targetSeasonData.leafOpacity - leafMaterial.opacity) * 0.05;
-}
-
-// Override setSeason to just update target
-// @ts-ignore
-setSeason = (s: Season) => {
-    currentSeason = s;
-    targetSeasonData = CONFIG.seasons[s];
-    if (s === 'winter') {
-         // Trigger rebuild to remove leaves eventually? 
-         // For now just fade.
-    } else {
-        if (treeGroup.children.length < 50) buildTree(); // Rebuild if barren
-    }
 }
 
 // Main Loop
