@@ -1,189 +1,186 @@
 import './style.css'
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-// --- Configuration: Bariloche Vibe ---
+// --- Configuration ---
 const CONFIG = {
   colors: {
-    skyTop: 0x2b4c7e, // Deep Andean Blue
-    skyBottom: 0x89b0d6, // Clear horizon
-    water: 0x003366, // Deep glacial lake (Nahuel Huapi)
-    waterHighlight: 0x005588,
-    mountainRock: 0x4a4a4a,
-    mountainSnow: 0xffffff,
-    forestDeep: 0x1a2e1a, // Dark pine/coihue
-    forestLight: 0x2d4c1e,
-    coihueBark: 0x5d4d3d, // Greyish-brown
-    arrayanBark: 0xc45e37, // Cinnamon (iconic)
+    skyTop: 0x0f2040, // Deep twilight/space blue
+    skyBottom: 0x88b0d6, // Atmospheric horizon
+    sun: 0xffaa33, // Golden hour
+    water: 0x001e36, // Deep dark lake
+    snow: 0xffffff,
+    rock: 0x3a3a3a,
+    grass: 0x2d4c1e,
+    forest: 0x1a281a,
   },
-  terrain: {
-    scale: 1000,
-    height: 300,
-  }
+  worldSize: 4000,
+  chunkSize: 512 // Resolution
 };
+
+// --- Helper: Deterministic Noise ---
+// A simple pseudo-random noise function (fractal sin/cos)
+function noise(x: number, z: number) {
+    const s = 0.0015; // Global scale
+    let y = 0;
+    // Layer 1: Base Mountains
+    y += Math.sin(x * s) * Math.cos(z * s) * 300;
+    // Layer 2: Medium Detail
+    y += Math.sin(x * s * 2.5 + 1.5) * Math.cos(z * s * 2.5 + 0.5) * 150;
+    // Layer 3: Rocky Noise
+    y += Math.sin(x * s * 10) * Math.cos(z * s * 10) * 20;
+    // Layer 4: Micro Detail
+    y += Math.sin(x * s * 30) * Math.cos(z * s * 35) * 5;
+    
+    return y;
+}
+
+// --- The "Truth" Height Function ---
+// Defines the Bariloche geography: Lake in center (-200 < y < 200 approx), Mountains outside.
+function getAltitude(x: number, z: number) {
+    // Distance from "Lake Center" (approx 0,0)
+    const d = Math.sqrt(x*x + z*z);
+    
+    // Base rolling terrain
+    let h = noise(x, z);
+    
+    // Sculpting: Force a lake valley in the center
+    // We want a bowl shape roughly.
+    // If d < 800, we push height down.
+    
+    const lakeRadius = 600;
+    const transition = 400;
+    
+    // Smooth transition from Lake (low) to Mountain (high)
+    let valleyFactor = 0;
+    if (d < lakeRadius) {
+        valleyFactor = 1.0;
+    } else if (d < lakeRadius + transition) {
+        valleyFactor = 1.0 - ((d - lakeRadius) / transition); // 1 -> 0
+    }
+    
+    // Flatten center for water
+    if (valleyFactor > 0) {
+        // We want the lake bed to be below 0
+        // And the mountains to be natural
+        // h_final = h_mountain * (1-valleyFactor) + h_lake * valleyFactor
+        
+        const h_lake = -50 - (Math.sin(x*0.01)*10); // Underwater variation
+        
+        h = THREE.MathUtils.lerp(h, h_lake, valleyFactor * valleyFactor); // Square for smooth ease
+    }
+    
+    // Add jagged peaks only to high areas
+    if (h > 100) {
+        h += Math.abs(Math.sin(x * 0.05 + z * 0.05)) * 50; // Sharp ridges
+    }
+    
+    return h;
+}
 
 // --- Scene Setup ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(CONFIG.colors.skyTop);
-// Fog to simulate atmospheric perspective in the Andes (clear but deep)
-scene.fog = new THREE.FogExp2(CONFIG.colors.skyBottom, 0.0015);
+scene.fog = new THREE.FogExp2(CONFIG.colors.skyBottom, 0.0008);
 
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 5000);
-camera.position.set(0, 30, 150); // High vantage point
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.8;
+renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
-// --- Post Processing (Bloom for Glare) ---
+// --- Post Processing ---
 const composer = new EffectComposer(renderer);
 const renderPass = new RenderPass(scene, camera);
 composer.addPass(renderPass);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.6;
-bloomPass.strength = 0.3;
-bloomPass.radius = 0.1;
+bloomPass.threshold = 0.5;
+bloomPass.strength = 0.4;
+bloomPass.radius = 0.5;
 composer.addPass(bloomPass);
 const outputPass = new OutputPass();
 composer.addPass(outputPass);
 
-// --- Controls ---
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
-controls.minDistance = 20;
-controls.maxDistance = 500;
-controls.maxPolarAngle = Math.PI / 2 - 0.05;
-controls.autoRotate = true;
-controls.autoRotateSpeed = 0.1; // Slow, majestic rotation
-
-// --- Lighting (Andean Sun) ---
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+// --- Lighting ---
+const ambientLight = new THREE.AmbientLight(0x404040, 2.0); // Brighter ambient for visibility
 scene.add(ambientLight);
 
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+const hemiLight = new THREE.HemisphereLight(CONFIG.colors.skyBottom, 0x000000, 0.6);
 scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight(0xffffee, 1.5);
-sunLight.position.set(200, 300, 100);
+const sunLight = new THREE.DirectionalLight(CONFIG.colors.sun, 2.5);
+sunLight.position.set(-500, 200, -500); // Low angle sun
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.width = 4096;
-sunLight.shadow.mapSize.height = 4096;
-sunLight.shadow.bias = -0.0001;
+sunLight.shadow.mapSize.set(4096, 4096);
 sunLight.shadow.camera.near = 10;
-sunLight.shadow.camera.far = 1000;
-const d = 500;
+sunLight.shadow.camera.far = 2000;
+const d = 1000;
 sunLight.shadow.camera.left = -d;
 sunLight.shadow.camera.right = d;
 sunLight.shadow.camera.top = d;
 sunLight.shadow.camera.bottom = -d;
+sunLight.shadow.bias = -0.0005;
 scene.add(sunLight);
 
-// --- Helpers: Noise ---
-// Simple pseudo-random noise function for terrain sculpting without external libs
-function noise(x: number, z: number) {
-    let y = Math.sin(x * 0.005) * Math.cos(z * 0.005) * 50; // Base rolling hills
-    y += Math.sin(x * 0.01 + z * 0.02) * 20; // Detail
-    y += Math.abs(Math.sin(x * 0.03)) * 10; // Ridges
-    return y;
-}
+// Sun Sprite (Visual only)
+const sunGeo = new THREE.SphereGeometry(40, 32, 32);
+const sunMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+sunMesh.position.copy(sunLight.position).multiplyScalar(2); // Far out
+scene.add(sunMesh);
 
-function mountainNoise(x: number, z: number) {
-    // Sharp, jagged Andes peaks
-    let h = 0;
-    const s = 0.002;
-    h += Math.abs(Math.sin(x * s) * Math.cos(z * s)) * 400; // Big peaks
-    h += Math.abs(Math.sin(x * s * 2.5 + 1.2) * Math.cos(z * s * 2.5 + 0.5)) * 150;
-    h += (Math.random() - 0.5) * 20; // Rocky noise
-    return h;
-}
 
-// --- Terrain Generation: The "Bariloche" Heightmap ---
-// Goal: Lake in center/foreground, Mountains in back/sides.
-
-const worldWidth = 2000;
-const worldDepth = 2000;
-const terrainGeo = new THREE.PlaneGeometry(worldWidth, worldDepth, 256, 256);
+// --- High-Fidelity Terrain ---
+const terrainGeo = new THREE.PlaneGeometry(CONFIG.worldSize, CONFIG.worldSize, 512, 512);
 const posAttr = terrainGeo.attributes.position;
-const colors = [];
+const colors: number[] = [];
+const colorAttr = new THREE.Color();
 
 for (let i = 0; i < posAttr.count; i++) {
     const x = posAttr.getX(i);
-    const y_orig = posAttr.getY(i); // This is Z in world space
+    const z = posAttr.getY(i); // Plane is created XY, we rotate later. This is effectively Z.
     
-    // Base mountain layer
-    const h_mtn = mountainNoise(x, y_orig - 500); // Back mountains
+    const h = getAltitude(x, z);
+    posAttr.setZ(i, h);
     
-    // Custom landscape logic:
-    // Z < -300: Steep Mountains (Cerro Catedral)
-    // Z > 100: Foreground Shore
-    // Else: Lake Transition
+    // Vertex Coloring based on Height & Slope
+    // Note: We can't easily compute slope here without neighbors, so we use Height + Noise mixing
     
-    let finalH = 0;
-    if (y_orig < -300) {
-        // High Andes
-        finalH = h_mtn; 
-    } else if (y_orig > 100) {
-        // Foreground Shore (where the camera is/Tree is)
-        finalH = noise(x, y_orig) * 0.5 + 5; // Rolling shore
+    let c = CONFIG.colors.grass;
+    
+    if (h < 5) {
+        c = 0x444422; // Shore/Sand
+    } else if (h > 250) {
+        c = CONFIG.colors.snow;
+    } else if (h > 120) {
+        c = CONFIG.colors.rock;
     } else {
-        // Lake Transition
-        // Smooth lerp from mountain base to lake bed
-        const t = (y_orig - (-300)) / (100 - (-300)); // 0 to 1
-        finalH = THREE.MathUtils.lerp(100, -20, t); // Slope down to water
-        finalH += (Math.random()-0.5)*5; // Roughness
+        c = CONFIG.colors.grass;
     }
     
-    // Shoreline Island Logic: 
-    // Create a small peninsula at (0, 100) for the tree
-    const distToCam = Math.sqrt(x*x + (y_orig - 100)*(y_orig - 100));
-    if (distToCam < 80) {
-        finalH = Math.max(finalH, 5 + Math.sin(distToCam * 0.1)*2);
-    }
-
-    posAttr.setZ(i, finalH);
+    // Noise mix for detail
+    const noiseVal = Math.sin(x*0.05)*Math.cos(z*0.05);
+    colorAttr.setHex(c);
+    colorAttr.offsetHSL(0, 0, noiseVal * 0.05); // Subtle variation
     
-    // Vertex Colors (Snow vs Rock vs Grass)
-    // We'll calculate slope later or just use height for now
-    // > 200: Snow
-    // > 50: Rock
-    // < 50: Grass/Forest
-    const c = new THREE.Color();
-    if (finalH > 220) {
-        c.setHex(CONFIG.colors.mountainSnow);
-    } else if (finalH > 100) {
-        c.setHex(CONFIG.colors.mountainRock);
-        // Mix with snow
-        if (Math.random() > 0.5) c.lerp(new THREE.Color(CONFIG.colors.mountainSnow), 0.5);
-    } else if (finalH > 5) {
-        // Forest/Grass
-        c.setHex(CONFIG.colors.forestLight);
-        // Add noise
-        c.lerp(new THREE.Color(CONFIG.colors.forestDeep), Math.random() * 0.5);
-    } else {
-        // Underwater / Beach
-        c.setHex(0x555533); // Sandy/Rocky
-    }
-    colors.push(c.r, c.g, c.b);
+    colors.push(colorAttr.r, colorAttr.g, colorAttr.b);
 }
-
 terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 terrainGeo.computeVertexNormals();
 
 const terrainMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
-    roughness: 0.9,
+    roughness: 0.8,
     metalness: 0.1,
-    flatShading: true // Low poly style for clear geometry, or false for smooth
+    flatShading: false, // Smooth shading for realism
 });
 const terrain = new THREE.Mesh(terrainGeo, terrainMat);
 terrain.rotation.x = -Math.PI / 2;
@@ -191,140 +188,174 @@ terrain.receiveShadow = true;
 terrain.castShadow = true;
 scene.add(terrain);
 
-// --- Water (Nahuel Huapi) ---
-const waterGeo = new THREE.PlaneGeometry(worldWidth, worldDepth);
+// --- Water (High Quality) ---
+// Procedural Normal Map for ripples
+const normCanvas = document.createElement('canvas');
+normCanvas.width = 512;
+normCanvas.height = 512;
+const nCtx = normCanvas.getContext('2d');
+if (nCtx) {
+    nCtx.fillStyle = '#8080ff'; // Flat normal
+    nCtx.fillRect(0,0,512,512);
+    // Draw random noise
+    for(let i=0; i<10000; i++) {
+        const x = Math.random()*512;
+        const y = Math.random()*512;
+        const s = Math.random()*4;
+        nCtx.fillStyle = `rgba(${128+(Math.random()-0.5)*50}, ${128+(Math.random()-0.5)*50}, 255, 0.5)`;
+        nCtx.fillRect(x,y,s,s);
+    }
+}
+const waterNorm = new THREE.CanvasTexture(normCanvas);
+waterNorm.wrapS = THREE.RepeatWrapping;
+waterNorm.wrapT = THREE.RepeatWrapping;
+waterNorm.repeat.set(10, 10);
+
+const waterGeo = new THREE.PlaneGeometry(CONFIG.worldSize, CONFIG.worldSize);
 const waterMat = new THREE.MeshStandardMaterial({
     color: CONFIG.colors.water,
-    roughness: 0.1,
-    metalness: 0.8,
-    transparent: true,
-    opacity: 0.9,
+    roughness: 0.05,
+    metalness: 0.9,
+    normalMap: waterNorm,
+    normalScale: new THREE.Vector2(0.5, 0.5),
 });
 const water = new THREE.Mesh(waterGeo, waterMat);
 water.rotation.x = -Math.PI / 2;
-water.position.y = 2; // Water level
+water.position.y = 0; // Sea Level
 scene.add(water);
 
 
-// --- Vegetation: The "Arrayán" & "Coihue" ---
-
-// 1. Hero Arrayán Tree (Foreground)
-// Distinctive cinnamon color, smooth, twisted.
-const arrayanGroup = new THREE.Group();
-scene.add(arrayanGroup);
-arrayanGroup.position.set(0, 5, 100); // On the peninsula
-
-const barkMat = new THREE.MeshStandardMaterial({ 
-    color: CONFIG.colors.arrayanBark, 
-    roughness: 0.4, // Smooth
-    metalness: 0.0
-});
-const leafMat = new THREE.MeshStandardMaterial({ 
-    color: CONFIG.colors.forestDeep, 
-    side: THREE.DoubleSide 
-});
-
-// Recursive function for twisted branches
-function createTwistedBranch(start: THREE.Vector3, dir: THREE.Vector3, len: number, rad: number, depth: number) {
-    if (depth === 0) {
-        // Leaves (small, oval)
-        const lg = new THREE.SphereGeometry(rad * 4, 4, 4);
-        const m = new THREE.Mesh(lg, leafMat);
-        m.position.copy(start);
-        m.scale.y = 0.5; // Flattened
-        m.castShadow = true;
-        arrayanGroup.add(m);
-        return;
-    }
-
-    const end = start.clone().add(dir.clone().multiplyScalar(len));
-    
-    // Curve for twist
-    const curve = new THREE.CatmullRomCurve3([
-        start,
-        start.clone().lerp(end, 0.5).add(new THREE.Vector3((Math.random()-0.5)*rad*2, 0, (Math.random()-0.5)*rad*2)),
-        end
-    ]);
-    
-    const geo = new THREE.TubeGeometry(curve, 4, rad, 6, false);
-    const mesh = new THREE.Mesh(geo, barkMat);
-    mesh.castShadow = true;
-    arrayanGroup.add(mesh);
-    
-    // Split
-    const count = 2;
-    for(let i=0; i<count; i++) {
-        const nd = dir.clone().applyEuler(new THREE.Euler(
-            (Math.random()-0.5)*1.0, 
-            (Math.random()-0.5)*1.0, 
-            (Math.random()-0.5)*1.0
-        )).normalize();
-        
-        createTwistedBranch(end, nd, len*0.8, rad*0.7, depth-1);
-    }
-}
-
-// Build Hero Arrayán
-createTwistedBranch(new THREE.Vector3(0,0,0), new THREE.Vector3(0,1,0), 8, 1.5, 4);
-
-
-// 2. Distant Forests (Coihues/Pines)
-// Simple instanced mesh for performance
-const treeCount = 500;
-const dummy = new THREE.Object3D();
-const pineGeo = new THREE.ConeGeometry(5, 20, 4);
-const pineMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.forestDeep, roughness: 0.9 });
+// --- Instanced Vegetation (Fixed Floating) ---
+const treeCount = 2000;
+const pineGeo = new THREE.ConeGeometry(5, 25, 6);
+const pineMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.forest, roughness: 0.8 });
 const forest = new THREE.InstancedMesh(pineGeo, pineMat, treeCount);
+forest.castShadow = true;
+forest.receiveShadow = true;
 scene.add(forest);
 
-let idx = 0;
+const dummy = new THREE.Object3D();
+let tIdx = 0;
+
 for(let i=0; i<treeCount; i++) {
-    // Random position
-    const x = (Math.random() - 0.5) * 1500;
-    const z = (Math.random() - 0.5) * 1500;
+    const x = (Math.random() - 0.5) * CONFIG.worldSize * 0.8;
+    const z = (Math.random() - 0.5) * CONFIG.worldSize * 0.8;
     
-    // Basic height check (approximate, since we don't have the heightmap function exposed cleanly for random coords)
-    // We'll just scatter them and adjust Y based on logic or a simplified check
-    // Actually, we can assume:
-    // Mountains are at z < -300
-    // We want trees on the lower slopes.
+    const h = getAltitude(x, z);
     
-    if (z > -500 && z < 0 && Math.abs(x) > 100) { // Slopes
-        dummy.position.set(x, 0, z);
+    // Logic: Only place trees on land, between height 5 and 200 (vegetation line)
+    // And avoid super steep slopes (optional, hard to check without normal, but height check helps)
+    
+    if (h > 5 && h < 200) {
+        dummy.position.set(x, h + 12.5, z); // +12.5 (half height) so base is at h
         
-        // Approx height (re-calc noise roughly)
-        // h_mtn = mountainNoise(x, z - 500); 
-        // Just use a random height on slope assumption
-        dummy.position.y = Math.random() * 50 + 20; 
-        
-        // Scale
-        const s = Math.random() * 0.5 + 0.5;
+        // Scale variation
+        const s = 0.8 + Math.random() * 0.6;
         dummy.scale.set(s, s, s);
         
+        // Random rotation
+        dummy.rotation.y = Math.random() * Math.PI * 2;
+        
         dummy.updateMatrix();
-        forest.setMatrixAt(idx++, dummy.matrix);
+        forest.setMatrixAt(tIdx++, dummy.matrix);
     }
+}
+// Hide unused instances
+for(let i=tIdx; i<treeCount; i++) {
+    forest.setMatrixAt(i, new THREE.Matrix4().set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0));
 }
 forest.instanceMatrix.needsUpdate = true;
 
 
-// --- Animation ---
-let time = 0;
+// --- Condor Flight Simulator ---
+
+// Condor Model (Procedural Group)
+const condor = new THREE.Group();
+const bodyGeo = new THREE.ConeGeometry(0.5, 2, 8);
+bodyGeo.rotateX(Math.PI / 2);
+const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({ color: 0x222222 }));
+condor.add(body);
+
+const wingGeo = new THREE.BoxGeometry(6, 0.2, 1);
+const wing = new THREE.Mesh(wingGeo, new THREE.MeshStandardMaterial({ color: 0x111111 }));
+wing.position.z = -0.2;
+condor.add(wing);
+
+scene.add(condor);
+
+// Flight State
+const flight = {
+    pos: new THREE.Vector3(0, 300, 600),
+    vel: new THREE.Vector3(0, 0, -1),
+    speed: 1.0,
+    pitch: 0,
+    yaw: 0,
+    roll: 0,
+};
+
+// Controls
+const input = { x: 0, y: 0 };
+window.addEventListener('mousemove', (e) => {
+    // Normalize -1 to 1
+    input.x = (e.clientX / window.innerWidth) * 2 - 1;
+    input.y = (e.clientY / window.innerHeight) * 2 - 1;
+});
+
+// --- Animation Loop ---
 function animate() {
     requestAnimationFrame(animate);
-    time += 0.002;
     
-    controls.update();
+    // Flight Physics
+    // Target Speed
+    const targetSpeed = 2.0 + (input.y > 0 ? input.y * 1.5 : 0); // Dive to speed up
+    flight.speed += (targetSpeed - flight.speed) * 0.05;
     
-    // Water gentle float
-    water.position.y = 2 + Math.sin(time) * 0.2;
+    // Rotation inputs
+    const targetPitch = input.y * 0.8;
+    const targetRoll = -input.x * 1.0;
+    const targetYaw = -input.x * 0.02; // Yaw turns slowly with roll
     
+    flight.pitch += (targetPitch - flight.pitch) * 0.1;
+    flight.roll += (targetRoll - flight.roll) * 0.05;
+    flight.yaw += targetYaw;
+    
+    // Calculate new velocity vector based on rotation
+    // Better flight model:
+    // Velocity is always moving forward in the direction the bird points
+    condor.rotation.set(flight.pitch, flight.yaw, flight.roll);
+    
+    const forward = new THREE.Vector3(0, 0, -1).applyEuler(condor.rotation);
+    forward.normalize();
+    
+    flight.pos.add(forward.multiplyScalar(flight.speed));
+    
+    // Terrain Collision Avoidance (Magic Updrafts)
+    const groundH = getAltitude(flight.pos.x, flight.pos.z);
+    if (flight.pos.y < groundH + 10) {
+        flight.pos.y = groundH + 10;
+        flight.pitch = Math.max(flight.pitch, 0.2); // Bounce up
+    }
+
+    condor.position.copy(flight.pos);
+    
+    // Camera Follow (Third Person)
+    const camOffset = new THREE.Vector3(0, 8, 25).applyEuler(new THREE.Euler(0, flight.yaw, 0)); // Trailing behind yaw only to prevent motion sickness from roll
+    // Add some pitch influence
+    camOffset.y += flight.pitch * 5;
+    
+    const targetCamPos = flight.pos.clone().add(camOffset);
+    camera.position.lerp(targetCamPos, 0.1);
+    camera.lookAt(flight.pos);
+    
+    // Animate Water Normals
+    waterNorm.offset.x += 0.001;
+    waterNorm.offset.y += 0.0005;
+
     composer.render();
 }
 
 animate();
 
-// Resize
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
